@@ -59,6 +59,20 @@ pub fn scan() -> CmdInput {
         _ => {}
     };
 
+    // If -api is set and no other primary inputs (config, local, remote),
+    // treat as CmdInput::None to ensure API server starts with default settings.
+    let is_api_flag_set = matches.get_flag("api");
+    let config_path = matches.get_one::<String>("config");
+    let listen_addr = matches.get_one::<String>("local"); // "local" is the ID for listen address
+    let remote_addr = matches.get_one::<String>("remote");
+
+    if is_api_flag_set && config_path.is_none() && listen_addr.is_none() && remote_addr.is_none() {
+        // Also check if there are no subcommands that would take precedence
+        if matches.subcommand_name().is_none() {
+            return CmdInput::None;
+        }
+    }
+
     // start
     handle_matches(matches)
 }

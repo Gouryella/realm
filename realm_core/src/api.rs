@@ -17,12 +17,12 @@ use dashmap::DashMap;
 
 // Channel for sending new endpoints to the main runtime
 lazy_static::lazy_static! {
-    pub static ref ENDPOINT_SENDER: DashMap<String, mpsc::Sender<EndpointInfo>> = DashMap::new();
+    pub static ref ENDPOINT_SENDER: DashMap<String, mpsc::Sender<Endpoint>> = DashMap::new();
 }
 
 #[derive(Debug, Deserialize)]
 pub struct AddEndpointRequest {
-    pub endpoint: EndpointConf,
+    pub endpoint: Endpoint,
 }
 
 const WWW_AUTHENTICATE_HEADER: &str = "Bearer realm=\"Realm API\"";
@@ -144,14 +144,6 @@ pub async fn add_rule(req: web::Json<AddEndpointRequest>) -> impl Responder {
 
     info!("Attempting to add new rule: {:?}", endpoint_conf);
 
-    let endpoint_info = match endpoint_conf.build() {
-        Ok(info) => info,
-        Err(e) => {
-            warn!("Failed to build endpoint from config: {}", e);
-            return HttpResponse::BadRequest().body(format!("Invalid endpoint configuration: {}", e));
-        }
-    };
-
     // Check if a sender for this endpoint already exists
     if ENDPOINT_SENDER.contains_key(&endpoint_id) {
         warn!("Rule with ID '{}' already exists.", endpoint_id);
@@ -159,24 +151,24 @@ pub async fn add_rule(req: web::Json<AddEndpointRequest>) -> impl Responder {
     }
 
     // Create a new channel for this endpoint
-    let (tx, rx) = mpsc::channel::<EndpointInfo>(1); // Buffer size 1, as we only send one endpoint at a time
+    let (tx, rx) = mpsc::channel::<Endpoint>(1); // Buffer size 1, as we only send one endpoint at a time
 
     // Store the sender in the global map
     ENDPOINT_SENDER.insert(endpoint_id.clone(), tx);
 
     // Spawn a task to receive the endpoint and start it
     tokio::spawn(async move {
-        if let Some(ep_info) = rx.recv().await {
-            info!("Starting new endpoint: {}", ep_info.endpoint);
+        if let Some(endpoint) = rx.recv().await {
+            info!("Starting new endpoint: {}", endpoint.endpoint);
             use crate::tcp::run_tcp;
             use crate::udp::run_udp;
 
-            if ep_info.use_udp {
-                tokio::spawn(run_udp(ep_info.clone()));
+            if endpoint.use_udp {
+                tokio::spawn(run_udp(endpoint.clone()));
             }
 
-            if !ep_info.no_tcp {
-                tokio::spawn(run_tcp(ep_info));
+            if !endpoint.no_tcp {
+                tokio::spawn(run_tcp(endpoint));
             }
         } else {
             warn!("Endpoint sender for {} was dropped before sending.", endpoint_id);
@@ -184,7 +176,7 @@ pub async fn add_rule(req: web::Json<AddEndpointRequest>) -> impl Responder {
     });
 
     // Send the endpoint info through the channel
-    if let Err(e) = ENDPOINT_SENDER.get(&endpoint_id).unwrap().send(endpoint_info).await {
+    if let Err(e) = ENDPOINT_SENDER.get(&endpoint_id).unwrap().send(endpoint_conf).await {
         warn!("Failed to send endpoint to worker: {}", e);
         ENDPOINT_SENDER.remove(&endpoint_id); // Clean up the sender if sending fails
         return HttpResponse::InternalServerError().body("Failed to activate new rule.");

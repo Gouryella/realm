@@ -1,8 +1,13 @@
-use actix_web::{get, web, HttpResponse, Responder}; // Removed App, HttpServer
+use actix_web::{get, web, HttpResponse, Responder, Error, HttpMessage}; // Removed App, HttpServer; Added Error, HttpMessage
+use actix_web::dev::{Service, ServiceRequest, ServiceResponse, Transform, forward_ready};
+use futures::future::{ok, Ready, LocalBoxFuture};
+use std::rc::Rc;
 use crate::monitor::{ConnectionMetrics, TCP_CONNECTION_METRICS, UDP_ASSOCIATION_METRICS}; // Adjusted path
 use serde::Serialize;
 use std::net::SocketAddr;
 // use std::sync::{Arc, Mutex}; // Not strictly required here as ConnectionMetrics is Clone and fields are public
+
+const WWW_AUTHENTICATE_HEADER: &str = "Bearer realm=\"Realm API\"";
 
 // Structs used for API responses can remain private to this module
 #[derive(Serialize, Debug)]
@@ -106,5 +111,85 @@ pub async fn get_udp_association_stats(client_addr_path: web::Path<String>) -> i
             }
         }
         Err(_) => HttpResponse::BadRequest().body(format!("Invalid client address format: {}", client_addr_str)),
+    }
+}
+
+// --- Authentication Middleware ---
+
+pub struct Authenticate {
+    expected_token: Option<String>,
+}
+
+impl Authenticate {
+    pub fn new(expected_token: Option<String>) -> Self {
+        Authenticate { expected_token }
+    }
+}
+
+impl<S, B> Transform<S, ServiceRequest> for Authenticate
+where
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
+    S::Future: 'static,
+    B: 'static,
+{
+    type Response = ServiceResponse<B>;
+    type Error = Error;
+    type InitError = ();
+    type Transform = AuthMiddleware<S>;
+    type Future = Ready<Result<Self::Transform, Self::InitError>>;
+
+    fn new_transform(&self, service: S) -> Self::Future {
+        ok(AuthMiddleware {
+            service: Rc::new(service),
+            expected_token: self.expected_token.clone(),
+        })
+    }
+}
+
+pub struct AuthMiddleware<S> {
+    service: Rc<S>,
+    expected_token: Option<String>,
+}
+
+impl<S, B> Service<ServiceRequest> for AuthMiddleware<S>
+where
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
+    S::Future: 'static,
+    B: 'static,
+{
+    type Response = ServiceResponse<B>;
+    type Error = Error;
+    type Future = LocalBoxFuture<'static, Result<Self::Response, Self::Error>>;
+
+    forward_ready!(service);
+
+    fn call(&self, req: ServiceRequest) -> Self::Future {
+        let Some(configured_token_unwrapped) = &self.expected_token else {
+            // No token configured on server, bypass auth
+            let fut = self.service.call(req);
+            return Box::pin(async move { fut.await });
+        };
+
+        if let Some(auth_header) = req.headers().get("Authorization") {
+            if let Ok(auth_str) = auth_header.to_str() {
+                if auth_str.starts_with("Bearer ") {
+                    let token = &auth_str["Bearer ".len()..];
+                    if token == configured_token_unwrapped {
+                        let fut = self.service.call(req);
+                        return Box::pin(async move { fut.await });
+                    }
+                }
+            }
+        }
+
+        // Token is missing, invalid, or malformed
+        Box::pin(async move {
+            Ok(req.into_response(
+                HttpResponse::Unauthorized()
+                    .insert_header(("WWW-Authenticate", WWW_AUTHENTICATE_HEADER))
+                    .finish()
+                    .into_body(), 
+            ))
+        })
     }
 }

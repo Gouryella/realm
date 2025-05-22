@@ -587,3 +587,48 @@ Require `proxy` feature.
 Wait for a PROXY header within a period of time, otherwise close the connection.
 
 default: 5.
+
+## Monitoring API
+
+This application includes an API endpoint to expose real-time traffic and speed statistics for active TCP connections and UDP associations.
+
+### Configuration
+
+The API server can be configured using environment variables, typically by creating a `.env` file in the root directory of the project.
+
+Create a `.env` file with the following variables as needed:
+
+```ini
+# .env example
+API_HOST=127.0.0.1
+API_PORT=8080
+API_AUTH_TOKEN=your_secret_and_strong_token_here
+```
+
+*   **`API_HOST`**: Specifies the host address the API server will bind to.
+    *   Default: `127.0.0.1` (localhost)
+    *   Example: `0.0.0.0` to listen on all network interfaces.
+*   **`API_PORT`**: Specifies the port the API server will listen on.
+    *   Default: `8080`
+*   **`API_AUTH_TOKEN`**: Defines a secret Bearer token required for API authentication.
+    *   **Important Security Note**: If this variable is not set or is left empty, the API will be accessible without any authentication. This is **strongly discouraged** for production environments or any deployment exposed to untrusted networks.
+    *   Choose a strong, unique token.
+
+### API Authentication
+
+To access the API endpoints, clients must include an `Authorization` header in their HTTP requests with the configured `API_AUTH_TOKEN`. The required format is:
+
+```
+Authorization: Bearer <your_API_AUTH_TOKEN>
+```
+
+Replace `<your_API_AUTH_TOKEN>` with the actual token value you set in the `API_AUTH_TOKEN` environment variable. Requests without a valid token, or if no token is configured on the server, will result in a `401 Unauthorized` error (unless the server-side token is not set, in which case requests will pass through without authentication).
+
+### Available Endpoints (Examples)
+
+*   `GET /rules/tcp`: Lists active TCP connections and their statistics.
+*   `GET /rules/tcp/{connection_id}/stats`: Statistics for a specific TCP connection.
+*   `GET /rules/udp`: Lists active UDP associations and their statistics.
+*   `GET /rules/udp/{client_addr}/stats`: Statistics for a specific UDP association.
+
+(Refer to the API implementation for detailed response structures.)

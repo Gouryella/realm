@@ -36,6 +36,7 @@ walkdir = "2"
 # runtime
 tokio = { version = "1", features = ["rt"] }
 actix-web = "4"
+dotenvy = "0.15"
 
 # logger
 log = "0.4"

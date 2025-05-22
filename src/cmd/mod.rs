@@ -38,14 +38,16 @@ pub fn scan() -> CmdInput {
     let mut app2 = app.clone();
     let matches = app.get_matches();
 
+    // If help or version flags are present, print and then exit.
+    // Otherwise, proceed to handle_matches which will start the API server if no other commands are given.
     if matches.get_flag("help") {
         app2.print_help().unwrap();
-        return CmdInput::None;
+        std::process::exit(0); // Exit after printing help
     }
 
     if matches.get_flag("version") {
         print!("{}", app2.render_version());
-        return CmdInput::None;
+        std::process::exit(0); // Exit after printing version
     }
 
     #[allow(clippy::single_match)]

@@ -43,7 +43,10 @@ fn main() {
                 conf.apply_global_opts().apply_cmd_opts(opts);
                 conf
             }
-            CmdInput::None => std::process::exit(0),
+            CmdInput::None => {
+                log::info!("No command line arguments or environment variables provided. Starting API server with default configuration.");
+                FullConf::default() // Create a default configuration to start the API server
+            }
         }
     };
 
@@ -131,7 +134,7 @@ async fn run(endpoints: Vec<EndpointInfo>) {
         Ok(path) => log::info!("Successfully loaded .env file from: {}", path.display()),
         Err(e) => {
             if e.not_found() {
-                log::debug!(".env file not found, proceeding with environment variables or defaults.");
+                log::warn!(".env file not found, proceeding with environment variables or defaults."); // Changed to warn!
             } else {
                 log::warn!("Failed to load .env file: {}", e);
             }

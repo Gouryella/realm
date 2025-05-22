@@ -3,6 +3,8 @@
 use std::fmt::{Display, Formatter};
 use std::net::SocketAddr;
 
+use serde::{Deserialize, Deserializer};
+
 #[cfg(feature = "transport")]
 use kaminari::mix::{MixAccept, MixConnect};
 
@@ -10,7 +12,8 @@ use kaminari::mix::{MixAccept, MixConnect};
 use realm_lb::Balancer;
 
 /// Remote address.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(untagged)]
 pub enum RemoteAddr {
     SocketAddr(SocketAddr),
     DomainName(String, u16),
@@ -18,11 +21,15 @@ pub enum RemoteAddr {
 
 /// Proxy protocol options.
 #[cfg(feature = "proxy")]
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy, Deserialize)]
 pub struct ProxyOpts {
+    #[serde(default)]
     pub send_proxy: bool,
+    #[serde(default)]
     pub accept_proxy: bool,
+    #[serde(default)]
     pub send_proxy_version: usize,
+    #[serde(default)]
     pub accept_proxy_timeout: usize,
 }
 
@@ -35,38 +42,52 @@ impl ProxyOpts {
 }
 
 /// Connect or associate options.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Deserialize)]
 pub struct ConnectOpts {
+    #[serde(default)]
     pub connect_timeout: usize,
+    #[serde(default)]
     pub associate_timeout: usize,
+    #[serde(default)]
     pub tcp_keepalive: usize,
+    #[serde(default)]
     pub tcp_keepalive_probe: usize,
+    #[serde(default)]
     pub bind_address: Option<SocketAddr>,
+    #[serde(default)]
     pub bind_interface: Option<String>,
 
     #[cfg(feature = "proxy")]
+    #[serde(default)]
     pub proxy_opts: ProxyOpts,
 
     #[cfg(feature = "transport")]
+    #[serde(default)]
     pub transport: Option<(MixAccept, MixConnect)>,
 
     #[cfg(feature = "balance")]
+    #[serde(default)]
     pub balancer: Balancer,
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Deserialize)]
 pub struct BindOpts {
+    #[serde(default)]
     pub ipv6_only: bool,
+    #[serde(default)]
     pub bind_interface: Option<String>,
 }
 
 /// Relay endpoint.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Endpoint {
     pub laddr: SocketAddr,
     pub raddr: RemoteAddr,
+    #[serde(default)]
     pub bind_opts: BindOpts,
+    #[serde(default)]
     pub conn_opts: ConnectOpts,
+    #[serde(default)]
     pub extra_raddrs: Vec<RemoteAddr>,
 }
 

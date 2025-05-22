@@ -28,7 +28,7 @@ pub fn scan() -> CmdInput {
         .disable_help_flag(true)
         .disable_help_subcommand(true)
         .disable_version_flag(true)
-        .arg_required_else_help(true)
+        // .arg_required_else_help(true) // Removed to allow default API server start
         .override_usage("realm [FLAGS] [OPTIONS]");
 
     let app = flag::add_all(app);

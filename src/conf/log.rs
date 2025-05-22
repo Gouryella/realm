@@ -7,10 +7,10 @@ use crate::consts::DEFAULT_LOG_FILE;
 #[derive(Debug, Default, Serialize, Deserialize, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
 pub enum LogLevel {
-    #[default]
     Off,
     Error,
     Warn,
+    #[default] // Set Info as default
     Info,
     Debug,
     Trace,

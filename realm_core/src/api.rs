@@ -1,14 +1,29 @@
 use actix_web::{
     body::BoxBody,
     dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform},
-    get, web, Error, HttpResponse, Responder,
+    get, post, web, Error, HttpResponse, Responder,
 };
 use futures::future::{ok, LocalBoxFuture, Ready};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{net::SocketAddr, rc::Rc, time::Instant};
 
-use crate::monitor::{ConnectionMetrics, TCP_CONNECTION_METRICS, UDP_ASSOCIATION_METRICS};
+use crate::{
+    endpoint::{EndpointConf, EndpointInfo},
+    monitor::{ConnectionMetrics, TCP_CONNECTION_METRICS, UDP_ASSOCIATION_METRICS},
+};
 use log::{info, warn};
+use tokio::sync::mpsc;
+use dashmap::DashMap;
+
+// Channel for sending new endpoints to the main runtime
+lazy_static::lazy_static! {
+    pub static ref ENDPOINT_SENDER: DashMap<String, mpsc::Sender<EndpointInfo>> = DashMap::new();
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AddEndpointRequest {
+    pub endpoint: EndpointConf,
+}
 
 const WWW_AUTHENTICATE_HEADER: &str = "Bearer realm=\"Realm API\"";
 
@@ -120,7 +135,77 @@ struct UdpAssociationResponse {
     stats: TrafficStatsResponse,
 }
 
-/// --------- TCP 相关 API ---------
+/// --------- API for managing Realm rules ---------
+
+#[post("/rules")]
+pub async fn add_rule(req: web::Json<AddEndpointRequest>) -> impl Responder {
+    let endpoint_conf = req.into_inner().endpoint;
+    let endpoint_id = endpoint_conf.endpoint.clone(); // Assuming endpoint has a unique ID or can be used as one
+
+    info!("Attempting to add new rule: {:?}", endpoint_conf);
+
+    let endpoint_info = match endpoint_conf.build() {
+        Ok(info) => info,
+        Err(e) => {
+            warn!("Failed to build endpoint from config: {}", e);
+            return HttpResponse::BadRequest().body(format!("Invalid endpoint configuration: {}", e));
+        }
+    };
+
+    // Check if a sender for this endpoint already exists
+    if ENDPOINT_SENDER.contains_key(&endpoint_id) {
+        warn!("Rule with ID '{}' already exists.", endpoint_id);
+        return HttpResponse::Conflict().body(format!("Rule with ID '{}' already exists.", endpoint_id));
+    }
+
+    // Create a new channel for this endpoint
+    let (tx, rx) = mpsc::channel::<EndpointInfo>(1); // Buffer size 1, as we only send one endpoint at a time
+
+    // Store the sender in the global map
+    ENDPOINT_SENDER.insert(endpoint_id.clone(), tx);
+
+    // Spawn a task to receive the endpoint and start it
+    tokio::spawn(async move {
+        if let Some(ep_info) = rx.recv().await {
+            info!("Starting new endpoint: {}", ep_info.endpoint);
+            use realm::core::tcp::run_tcp;
+            use realm::core::udp::run_udp;
+
+            if ep_info.use_udp {
+                tokio::spawn(run_udp(ep_info.clone()));
+            }
+
+            if !ep_info.no_tcp {
+                tokio::spawn(run_tcp(ep_info));
+            }
+        } else {
+            warn!("Endpoint sender for {} was dropped before sending.", endpoint_id);
+        }
+    });
+
+    // Send the endpoint info through the channel
+    if let Err(e) = ENDPOINT_SENDER.get(&endpoint_id).unwrap().send(endpoint_info).await {
+        warn!("Failed to send endpoint to worker: {}", e);
+        ENDPOINT_SENDER.remove(&endpoint_id); // Clean up the sender if sending fails
+        return HttpResponse::InternalServerError().body("Failed to activate new rule.");
+    }
+
+    HttpResponse::Created().body(format!("Rule '{}' added successfully.", endpoint_id))
+}
+
+#[actix_web::delete("/rules/{endpoint_id}")]
+pub async fn delete_rule(endpoint_id: web::Path<String>) -> impl Responder {
+    let id = endpoint_id.into_inner();
+    info!("Attempting to delete rule with ID: {}", id);
+
+    if ENDPOINT_SENDER.remove(&id).is_some() {
+        info!("Rule '{}' deleted successfully.", id);
+        HttpResponse::Ok().body(format!("Rule '{}' deleted successfully.", id))
+    } else {
+        warn!("Rule with ID '{}' not found for deletion.", id);
+        HttpResponse::NotFound().body(format!("Rule with ID '{}' not found.", id))
+    }
+}
 
 #[get("/rules/tcp")]
 pub async fn list_tcp_connections() -> impl Responder {

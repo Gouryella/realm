@@ -44,7 +44,24 @@ fn main() {
                 conf
             }
             CmdInput::None => {
-                log::info!("No command line arguments or environment variables provided. Starting API server with default configuration.");
+                // Load .env file if it exists
+                if dotenvy::dotenv().is_err() {
+                    log::warn!("Warning: .env file not found. API server will use default configuration or environment variables set directly.");
+                }
+
+                // Check if API_HOST or API_PORT are set, otherwise prompt for .env
+                let api_host_set = env::var("API_HOST").is_ok();
+                let api_port_set = env::var("API_PORT").is_ok();
+
+                if !api_host_set && !api_port_set {
+                    println!("No command line arguments or environment variables provided. To start the API server, consider creating a .env file with API_HOST and API_PORT, or set them directly in your environment.");
+                    println!("Example .env content:");
+                    println!("API_HOST=127.0.0.1");
+                    println!("API_PORT=8080");
+                    println!("API_AUTH_TOKEN=your_secret_token_here");
+                    // Exit if no configuration is provided and .env is missing
+                    std::process::exit(1);
+                }
                 FullConf::default() // Create a default configuration to start the API server
             }
         }
@@ -127,19 +144,9 @@ async fn run(endpoints: Vec<EndpointInfo>) {
     use futures::future::join_all;
     use actix_web::{App, HttpServer};
     // Unused imports for specific handlers are removed as they are called with fully qualified paths.
-    // use realm_core::api::{list_tcp_connections, get_tcp_connection_stats, list_udp_associations, get_udp_association_stats}; // This line is removed
-
-    // Load .env file if present
-    match dotenvy::dotenv() {
-        Ok(path) => log::info!("Successfully loaded .env file from: {}", path.display()),
-        Err(e) => {
-            if e.not_found() {
-                log::warn!(".env file not found, proceeding with environment variables or defaults."); // Changed to warn!
-            } else {
-                log::warn!("Failed to load .env file: {}", e);
-            }
-        }
-    }
+    // The .env file is now loaded earlier in `main` function if CmdInput::None.
+    // If other CmdInput variants are used, .env loading is not strictly necessary
+    // as configuration is explicitly provided.
 
     tokio::spawn(periodically_calculate_speeds());
 
@@ -189,6 +196,7 @@ async fn run(endpoints: Vec<EndpointInfo>) {
         App::new()
             .wrap(realm_core::api::RequestLogger) // Add the RequestLogger middleware
             .wrap(realm_core::api::Authenticate::new(expected_api_token.clone())) // Apply authentication middleware
+            .service(realm_core::api::add_rule) // Add the new rule endpoint
             .service(realm_core::api::list_tcp_connections)
             .service(realm_core::api::get_tcp_connection_stats)
             .service(realm_core::api::list_udp_associations)
@@ -201,6 +209,18 @@ async fn run(endpoints: Vec<EndpointInfo>) {
     tokio::spawn(server);
     // Use the original api_host for the log message, not the cloned one.
     log::info!("API server started at http://{}:{}", api_host, api_port);
+
+    // If no endpoints are provided via command line or config file,
+    // and we are in API mode, we should not proceed to run workers for static endpoints.
+    // The API server will handle dynamic endpoint creation.
+    if endpoints.is_empty() {
+        log::info!("No static endpoints configured. API server is running and ready to accept dynamic rule additions.");
+        // Keep the main thread alive to allow the API server to run
+        // A simple way to do this is to just wait indefinitely or until a signal.
+        // For now, we'll just let the runtime manage it.
+        // In a real application, you might want to listen for termination signals.
+        return;
+    }
 
     let mut workers = Vec::with_capacity(2 * endpoints.len());
 

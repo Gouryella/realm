@@ -5,13 +5,89 @@ use actix_web::{
 };
 use futures::future::{ok, LocalBoxFuture, Ready};
 use serde::Serialize;
-use std::{net::SocketAddr, rc::Rc};
+use std::{net::SocketAddr, rc::Rc, time::Instant};
 
 use crate::monitor::{ConnectionMetrics, TCP_CONNECTION_METRICS, UDP_ASSOCIATION_METRICS};
+use log::{info, warn};
 
 const WWW_AUTHENTICATE_HEADER: &str = "Bearer realm=\"Realm API\"";
 
-/// --------- 公共结构体 ---------
+/// --------- Request Logger Middleware ---------
+
+pub struct RequestLogger;
+
+impl<S> Transform<S, ServiceRequest> for RequestLogger
+where
+    S: Service<ServiceRequest, Response = ServiceResponse<BoxBody>, Error = Error> + 'static,
+    S::Future: 'static,
+{
+    type Response = ServiceResponse<BoxBody>;
+    type Error = Error;
+    type InitError = ();
+    type Transform = RequestLoggerMiddleware<S>;
+    type Future = Ready<Result<Self::Transform, Self::InitError>>;
+
+    fn new_transform(&self, service: S) -> Self::Future {
+        ok(RequestLoggerMiddleware {
+            service: Rc::new(service),
+        })
+    }
+}
+
+pub struct RequestLoggerMiddleware<S> {
+    service: Rc<S>,
+}
+
+impl<S> Service<ServiceRequest> for RequestLoggerMiddleware<S>
+where
+    S: Service<ServiceRequest, Response = ServiceResponse<BoxBody>, Error = Error> + 'static,
+    S::Future: 'static,
+{
+    type Response = ServiceResponse<BoxBody>;
+    type Error = Error;
+    type Future = LocalBoxFuture<'static, Result<Self::Response, Self::Error>>;
+
+    forward_ready!(service);
+
+    fn call(&self, req: ServiceRequest) -> Self::Future {
+        let method = req.method().to_string();
+        let path = req.path().to_string();
+        let start_time = Instant::now();
+
+        info!("API Request: {} {}", method, path);
+        // Log request headers (excluding Authorization for security)
+        for (header_name, header_value) in req.headers() {
+            if header_name != "authorization" {
+                if let Ok(value_str) = header_value.to_str() {
+                    info!("  Header: {}: {}", header_name, value_str);
+                }
+            }
+        }
+
+        let fut = self.service.call(req);
+
+        Box::pin(async move {
+            let res = fut.await?;
+            let duration = start_time.elapsed();
+            info!(
+                "API Response: {} {} - Status: {} - Duration: {:?}",
+                method,
+                path,
+                res.status(),
+                duration
+            );
+            // Log response headers
+            for (header_name, header_value) in res.headers() {
+                if let Ok(value_str) = header_value.to_str() {
+                    info!("  Response Header: {}: {}", header_name, value_str);
+                }
+            }
+            Ok(res)
+        })
+    }
+}
+
+/// --------- Common Structs ---------
 
 #[derive(Serialize, Debug)]
 struct TrafficStatsResponse {
@@ -59,7 +135,7 @@ pub async fn list_tcp_connections() -> impl Responder {
                 stats: create_traffic_stats_response(&metrics),
             });
         } else {
-            log::warn!("Failed to lock TCP metrics for API for key: {}", key);
+            warn!("Failed to lock TCP metrics for API for key: {}", key);
         }
     }
 
@@ -98,7 +174,7 @@ pub async fn list_udp_associations() -> impl Responder {
                 stats: create_traffic_stats_response(&metrics),
             });
         } else {
-            log::warn!("Failed to lock UDP metrics for API for key: {:?}", client_socket_addr);
+            warn!("Failed to lock UDP metrics for API for key: {:?}", client_socket_addr);
         }
     }
 

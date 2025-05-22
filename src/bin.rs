@@ -178,12 +178,14 @@ async fn run(endpoints: Vec<EndpointInfo>) {
     if expected_api_token.is_none() {
         log::warn!("API_AUTH_TOKEN is not set or is empty. The API will be accessible without authentication. This is strongly discouraged for production environments.");
     }
-    
+
     // Clone api_host for use in the closure, as it will be moved into bind.
     let api_host_clone_for_closure = api_host.clone();
-    let server = HttpServer::new(move || { // expected_api_token is moved into the closure
+    let server = HttpServer::new(move || {
+        // expected_api_token is moved into the closure
         App::new()
-            .wrap(realm_core::api::Authenticate::new(expected_api_token.clone())) // Apply middleware
+            .wrap(realm_core::api::RequestLogger) // Add the RequestLogger middleware
+            .wrap(realm_core::api::Authenticate::new(expected_api_token.clone())) // Apply authentication middleware
             .service(realm_core::api::list_tcp_connections)
             .service(realm_core::api::get_tcp_connection_stats)
             .service(realm_core::api::list_udp_associations)
@@ -192,7 +194,7 @@ async fn run(endpoints: Vec<EndpointInfo>) {
     .bind((api_host_clone_for_closure, api_port))
     .unwrap_or_else(|e| panic!("Failed to bind API server to {}:{}: {}", api_host, api_port, e)) // Original api_host used in panic for clarity
     .run();
-    
+
     tokio::spawn(server);
     // Use the original api_host for the log message, not the cloned one.
     log::info!("API server started at http://{}:{}", api_host, api_port);

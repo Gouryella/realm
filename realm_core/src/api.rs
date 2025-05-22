@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::{net::SocketAddr, rc::Rc, time::Instant};
 
 use crate::{
-    endpoint::{EndpointConf, EndpointInfo},
+    endpoint::{Endpoint, EndpointInfo},
     monitor::{ConnectionMetrics, TCP_CONNECTION_METRICS, UDP_ASSOCIATION_METRICS},
 };
 use log::{info, warn};
@@ -168,8 +168,8 @@ pub async fn add_rule(req: web::Json<AddEndpointRequest>) -> impl Responder {
     tokio::spawn(async move {
         if let Some(ep_info) = rx.recv().await {
             info!("Starting new endpoint: {}", ep_info.endpoint);
-            use realm::core::tcp::run_tcp;
-            use realm::core::udp::run_udp;
+            use crate::tcp::run_tcp;
+            use crate::udp::run_udp;
 
             if ep_info.use_udp {
                 tokio::spawn(run_udp(ep_info.clone()));

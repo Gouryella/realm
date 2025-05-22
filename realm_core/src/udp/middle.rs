@@ -1,8 +1,9 @@
 use std::io::Result;
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::net::UdpSocket;
 
+use crate::monitor::{ConnectionMetrics, UDP_ASSOCIATION_METRICS};
 use super::SockMap;
 use super::{socket, batched};
 
@@ -125,12 +126,40 @@ pub async fn associate_and_relay(
             let laddr = pkts[0].addr.clone().into();
             let rsock = sockmap.find_or_insert(&laddr, || {
                 let s = Arc::new(socket::associate(&raddr, &conn_opts)?);
-                tokio::spawn(send_back(lis, laddr, s.clone(), conn_opts, sockmap));
+                let metrics_for_laddr = UDP_ASSOCIATION_METRICS
+                    .entry(laddr)
+                    .or_insert_with(|| Arc::new(Mutex::new(ConnectionMetrics::new())))
+                    .value()
+                    .clone();
+                log::debug!("[udp] Ensuring metrics for association {} stored/retrieved.", laddr);
+                tokio::spawn(send_back(
+                    lis,
+                    laddr,
+                    s.clone(),
+                    conn_opts,
+                    sockmap,
+                    metrics_for_laddr,
+                ));
                 log::info!("[udp]new association {} => {} as {}", laddr, *rname, raddr);
                 Result::Ok(s)
             })?;
-            let raddr: SockAddrStore = raddr.into();
-            batched::send_all(&rsock, pkts.iter().map(|x| x.ref_with_addr(&raddr))).await?;
+
+            // Uplink traffic processing
+            let packets_to_send_iter_vec: Vec<_> = pkts.iter().map(|x| x.ref_with_addr(&raddr.into())).collect();
+            let total_bytes_uplink: usize = packets_to_send_iter_vec.iter().map(|p_ref| p_ref.buf.len()).sum();
+
+            batched::send_all(&rsock, packets_to_send_iter_vec.into_iter()).await?;
+
+            if let Some(metrics_entry) = UDP_ASSOCIATION_METRICS.get(&laddr) {
+                let metrics = metrics_entry.value(); // This is &Arc<Mutex<ConnectionMetrics>>
+                if let Ok(mut w_metrics) = metrics.lock() {
+                    w_metrics.update_tx(total_bytes_uplink as u64);
+                } else {
+                    log::warn!("[udp] Failed to lock metrics for TX update for {}", laddr);
+                }
+            } else {
+                log::warn!("[udp] No metrics found for uplink for {} (key: {}). Total uplink bytes: {}", rname.to_string(), laddr, total_bytes_uplink);
+            }
         }
     }
 }
@@ -141,6 +170,7 @@ async fn send_back(
     rsock: Arc<UdpSocket>,
     conn_opts: Ref<ConnectOpts>,
     sockmap: Ref<SockMap>,
+    metrics: Arc<Mutex<ConnectionMetrics>>,
 ) {
     let mut registry = Registry::new(batched::MAX_PACKETS);
     let timeout = conn_opts.associate_timeout;
@@ -161,13 +191,22 @@ async fn send_back(
             }
         };
 
-        let pkts = registry.iter().map(|pkt| pkt.ref_with_addr(&laddr_s));
-        if let Err(e) = batched::send_all(&lsock, pkts).await {
+        let packets_to_send_iter_vec: Vec<_> = registry.iter().map(|pkt| pkt.ref_with_addr(&laddr_s)).collect();
+        let total_bytes_downlink: usize = packets_to_send_iter_vec.iter().map(|p_ref| p_ref.buf.len()).sum();
+
+        if let Err(e) = batched::send_all(&lsock, packets_to_send_iter_vec.into_iter()).await {
             log::error!("[udp]failed to sendto client{}: {}", &laddr, e);
             break;
+        } else {
+            if let Ok(mut w_metrics) = metrics.lock() {
+                 w_metrics.update_rx(total_bytes_downlink as u64);
+            } else {
+                log::warn!("[udp] Failed to lock metrics for RX update for {}", laddr);
+            }
         }
     }
 
     sockmap.remove(&laddr);
-    log::debug!("[udp]remove association for {}", &laddr);
+    UDP_ASSOCIATION_METRICS.remove(&laddr);
+    log::debug!("[udp]remove association and metrics for {}", &laddr);
 }

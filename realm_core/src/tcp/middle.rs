@@ -15,6 +15,10 @@ use super::transport;
 
 use crate::trick::Ref;
 use crate::endpoint::{RemoteAddr, ConnectOpts};
+use crate::monitor::{ConnectionMetrics, TCP_CONNECTION_METRICS};
+use std::sync::{Arc, Mutex};
+use uuid::Uuid;
+
 #[allow(unused)]
 pub async fn connect_and_relay(
     mut local: TcpStream,
@@ -85,25 +89,33 @@ pub async fn connect_and_relay(
     }
 
     // relay
-    let res = {
+    let metrics = Arc::new(Mutex::new(ConnectionMetrics::new()));
+    let conn_id = Uuid::new_v4().to_string();
+    TCP_CONNECTION_METRICS.insert(conn_id.clone(), metrics.clone());
+    log::debug!("[tcp] Stored metrics for connection {}", conn_id);
+
+    let relay_result = async {
         #[cfg(feature = "transport")]
         {
             if let Some((ac, cc)) = transport {
-                transport::run_relay(local, remote, ac, cc).await
+                transport::run_relay(local, remote, ac, cc, metrics.clone()).await
             } else {
-                plain::run_relay(local, remote).await
+                plain::run_relay(local, remote, metrics.clone()).await
             }
         }
         #[cfg(not(feature = "transport"))]
         {
-            plain::run_relay(local, remote).await
+            plain::run_relay(local, remote, metrics.clone()).await
         }
-    };
+    }.await;
+
+    TCP_CONNECTION_METRICS.remove(&conn_id);
+    log::debug!("[tcp] Removed metrics for connection {}", conn_id);
 
     // ignore relay error
-    if let Err(e) = res {
+    if let Err(e) = &relay_result {
         log::debug!("[tcp]forward error: {}, ignored", e);
     }
 
-    Ok(())
+    relay_result.map(|_| ())
 }

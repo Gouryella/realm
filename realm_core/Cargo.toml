@@ -29,8 +29,10 @@ dashmap = "5.5"
 uuid = { version = "1.4", features = ["v4"] }
 tokio = { version = "1.9", features = ["rt", "net", "time"] }
 proxy-protocol = { version = "0.5", optional = true }
-serde = { version = "1.0", features = ["derive"] } # No longer optional as api.rs uses it
-actix-web = "4" # Added as a regular dependency for api.rs
+serde = { version = "1.0", features = ["derive"] }
+actix-web = "4"
+lazy_static = "1.4" # Add lazy_static dependency
+tokio = { version = "1.9", features = ["rt", "net", "time", "sync"] } # Add sync feature for mpsc
 
 [features]
 default = []

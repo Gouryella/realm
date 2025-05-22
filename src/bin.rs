@@ -59,8 +59,6 @@ fn main() {
                     println!("API_HOST=127.0.0.1");
                     println!("API_PORT=8080");
                     println!("API_AUTH_TOKEN=your_secret_token_here");
-                    // Exit if no configuration is provided and .env is missing
-                    std::process::exit(1);
                 }
                 FullConf::default() // Create a default configuration to start the API server
             }
@@ -197,6 +195,7 @@ async fn run(endpoints: Vec<EndpointInfo>) {
             .wrap(realm_core::api::RequestLogger) // Add the RequestLogger middleware
             .wrap(realm_core::api::Authenticate::new(expected_api_token.clone())) // Apply authentication middleware
             .service(realm_core::api::add_rule) // Add the new rule endpoint
+            .service(realm_core::api::delete_rule) // Add the delete rule endpoint
             .service(realm_core::api::list_tcp_connections)
             .service(realm_core::api::get_tcp_connection_stats)
             .service(realm_core::api::list_udp_associations)

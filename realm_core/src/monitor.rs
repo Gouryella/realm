@@ -3,8 +3,8 @@ use once_cell::sync::Lazy;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use uuid::Uuid;
-use serde::Serialize;
+// use uuid::Uuid; // Removed as it's not used at the top-level of this file
+use serde::Serialize; // Serialize is used by TrafficStats
 
 pub static TCP_CONNECTION_METRICS: Lazy<DashMap<String, Arc<Mutex<ConnectionMetrics>>>> = Lazy::new(DashMap::new);
 pub static UDP_ASSOCIATION_METRICS: Lazy<DashMap<SocketAddr, Arc<Mutex<ConnectionMetrics>>>> = Lazy::new(DashMap::new);
@@ -15,9 +15,9 @@ pub struct TrafficStats {
     pub rx_bytes: u64,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Clone)] // Removed Serialize
 pub struct ConnectionMetrics {
-    pub traffic: TrafficStats,
+    pub traffic: TrafficStats, // TrafficStats still derives Serialize
     pub start_time: Instant,
     pub last_tx_bytes: u64, // Made public for Serialize and Clone
     pub last_rx_bytes: u64, // Made public for Serialize and Clone

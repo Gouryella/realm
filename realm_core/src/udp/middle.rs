@@ -145,10 +145,15 @@ pub async fn associate_and_relay(
             })?;
 
             // Uplink traffic processing
-            let packets_to_send_iter_vec: Vec<_> = pkts.iter().map(|x| x.ref_with_addr(&raddr.into())).collect();
+            let raddr_store: SockAddrStore = raddr.into(); // Create SockAddrStore with a longer lifetime
+            let packets_to_send_iter_vec: Vec<_> = pkts.iter().map(|x| x.ref_with_addr(&raddr_store)).collect();
             let total_bytes_uplink: usize = packets_to_send_iter_vec.iter().map(|p_ref| p_ref.len()).sum();
 
-            batched::send_all(&rsock, packets_to_send_iter_vec.into_iter()).await?;
+            // The call to batched::send_all remains the same, using packets_to_send_iter_vec
+            if let Err(e) = batched::send_all(&rsock, packets_to_send_iter_vec.into_iter()).await {
+                 log::error!("[udp]failed to send to remote {}: {}", raddr, e);
+                 // Depending on desired behavior, you might want to break or continue here
+            }
 
             if let Some(metrics_entry) = UDP_ASSOCIATION_METRICS.get(&laddr) {
                 let metrics = metrics_entry.value(); // This is &Arc<Mutex<ConnectionMetrics>>

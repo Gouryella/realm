@@ -1,7 +1,7 @@
 use std::env;
 use cfg_if::cfg_if;
 
-mod api;
+// mod api; // Removed this line
 use realm::cmd;
 use realm::conf::{Config, FullConf, LogConf, DnsConf, EndpointInfo};
 use realm::ENV_CONFIG;
@@ -121,8 +121,9 @@ async fn run(endpoints: Vec<EndpointInfo>) {
     use realm::core::udp::run_udp;
     use realm_core::monitor::periodically_calculate_speeds;
     use futures::future::join_all;
-    use actix_web::{App, HttpServer}; // HttpServer might be implicitly used via api.rs, but App is needed
-    use crate::api::{list_tcp_connections, get_tcp_connection_stats, list_udp_associations, get_udp_association_stats};
+    use actix_web::{App, HttpServer};
+    // Correctly use realm_core::api for handlers
+    use realm_core::api::{list_tcp_connections, get_tcp_connection_stats, list_udp_associations, get_udp_association_stats};
 
     tokio::spawn(periodically_calculate_speeds());
 
@@ -132,10 +133,10 @@ async fn run(endpoints: Vec<EndpointInfo>) {
 
     let server = HttpServer::new(move || {
         App::new()
-            .service(list_tcp_connections)
-            .service(get_tcp_connection_stats)
-            .service(list_udp_associations)
-            .service(get_udp_association_stats)
+            .service(realm_core::api::list_tcp_connections)
+            .service(realm_core::api::get_tcp_connection_stats)
+            .service(realm_core::api::list_udp_associations)
+            .service(realm_core::api::get_udp_association_stats)
     })
     .bind((api_host, api_port))
     .unwrap_or_else(|e| panic!("Failed to bind API server to {}:{}: {}", api_host, api_port, e))

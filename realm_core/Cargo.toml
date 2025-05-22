@@ -27,7 +27,6 @@ pin-project = "1"
 hickory-resolver = "0.24"
 dashmap = "5.5"
 uuid = { version = "1.4", features = ["v4"] }
-tokio = { version = "1.9", features = ["rt", "net", "time"] }
 proxy-protocol = { version = "0.5", optional = true }
 serde = { version = "1.0", features = ["derive"] }
 actix-web = "4"

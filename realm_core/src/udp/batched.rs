@@ -61,6 +61,12 @@ pub struct PacketRef<'buf, 'addr> {
     addr: &'addr SockAddrStore,
 }
 
+impl<'buf, 'addr> PacketRef<'buf, 'addr> {
+    pub fn len(&self) -> usize {
+        self.buf.len()
+    }
+}
+
 impl Packet {
     pub const fn new() -> Self {
         Self {

@@ -146,7 +146,7 @@ pub async fn associate_and_relay(
 
             // Uplink traffic processing
             let packets_to_send_iter_vec: Vec<_> = pkts.iter().map(|x| x.ref_with_addr(&raddr.into())).collect();
-            let total_bytes_uplink: usize = packets_to_send_iter_vec.iter().map(|p_ref| p_ref.buf.len()).sum();
+            let total_bytes_uplink: usize = packets_to_send_iter_vec.iter().map(|p_ref| p_ref.len()).sum();
 
             batched::send_all(&rsock, packets_to_send_iter_vec.into_iter()).await?;
 
@@ -192,7 +192,7 @@ async fn send_back(
         };
 
         let packets_to_send_iter_vec: Vec<_> = registry.iter().map(|pkt| pkt.ref_with_addr(&laddr_s)).collect();
-        let total_bytes_downlink: usize = packets_to_send_iter_vec.iter().map(|p_ref| p_ref.buf.len()).sum();
+        let total_bytes_downlink: usize = packets_to_send_iter_vec.iter().map(|p_ref| p_ref.len()).sum();
 
         if let Err(e) = batched::send_all(&lsock, packets_to_send_iter_vec.into_iter()).await {
             log::error!("[udp]failed to sendto client{}: {}", &laddr, e);

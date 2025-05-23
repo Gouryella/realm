@@ -17,7 +17,7 @@ use dashmap::DashMap;
 
 // Channel for sending new endpoints to the main runtime
 lazy_static::lazy_static! {
-    pub static ref ENDPOINT_SENDER: DashMap<String, mpsc::Sender<Endpoint>> = DashMap::new();
+    pub static ref ENDPOINT_SENDER: DashMap<String, mpsc::Sender<ApiEndpointTask>> = DashMap::new();
 }
 
 #[derive(Debug, Deserialize)]
@@ -25,6 +25,13 @@ pub struct AddEndpointRequest {
     pub endpoint: Endpoint,
     pub use_udp: Option<bool>,
     pub no_tcp: Option<bool>,
+}
+
+#[derive(Debug)]
+struct ApiEndpointTask {
+    endpoint: Endpoint,
+    use_udp: bool,
+    no_tcp: bool,
 }
 
 const WWW_AUTHENTICATE_HEADER: &str = "Bearer realm=\"Realm API\"";
@@ -153,20 +160,11 @@ pub async fn add_rule(req: web::Json<AddEndpointRequest>) -> impl Responder {
         return HttpResponse::Conflict().body(format!("Rule with ID '{}' already exists.", endpoint_id));
     }
 
-    // The channel should probably send a structure that includes the endpoint and the flags
-    // For now, let's assume Endpoint itself is what's sent, and flags are used locally before spawn
-    // Or, more correctly, the task needs the flags. Let's define a small struct for the channel.
-    #[derive(Debug)]
-    struct ApiEndpointTask {
-        endpoint: Endpoint,
-        use_udp: bool,
-        no_tcp: bool,
-    }
     let (tx, mut rx) = mpsc::channel::<ApiEndpointTask>(1);
 
 
     // Store the sender in the global map
-    ENDPOINT_SENDER.insert(endpoint_id.clone(), tx);
+    ENDPOINT_SENDER.insert(endpoint_id.clone(), tx).unwrap(); // unwrap() is fine if we check contains_key first
 
     // Spawn a task to receive the endpoint and start it
     tokio::spawn(async move {

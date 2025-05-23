@@ -3,7 +3,7 @@
 use std::fmt::{Display, Formatter};
 use std::net::SocketAddr;
 
-use serde::{Deserialize, Deserializer};
+use serde::Deserialize;
 
 #[cfg(feature = "transport")]
 use kaminari::mix::{MixAccept, MixConnect};

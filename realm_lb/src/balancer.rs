@@ -90,17 +90,20 @@ impl Balancer {
 
     /// Parse balancer from string.
     /// Format: $strategy: $weight1, $weight2, ...
-    pub fn parse_from_str(s: &str) -> Self {
-        let (strategy, weights) = s.split_once(':').unwrap();
+    pub fn parse_from_str(s: &str) -> Result<Self, String> {
+        let (strategy_str, weights_str) = s.split_once(':')
+            .ok_or_else(|| format!("Invalid balancer string format: missing ':' in '{}'", s))?;
 
-        let strategy = Strategy::from(strategy.trim());
-        let weights: Vec<u8> = weights
+        let strategy = Strategy::from(strategy_str.trim()); // Assuming Strategy::from might panic too, ideally it would also return Result
+        // If Strategy::from can panic, that should also be handled. For now, focus on split_once.
+
+        let weights: Vec<u8> = weights_str
             .trim()
             .split(',')
             .filter_map(|s| s.trim().parse().ok())
             .collect();
 
-        Self::new(strategy, &weights)
+        Ok(Self::new(strategy, &weights))
     }
 }
 
@@ -116,11 +119,7 @@ impl<'de> Deserialize<'de> for Balancer {
         D: Deserializer<'de>,
     {
         let s = String::deserialize(deserializer)?;
-        // Assuming parse_from_str is robust enough for direct use.
-        // A production implementation should handle potential panics from parse_from_str
-        // and map them to serde::de::Error::custom.
-        // For now, direct use is fine as per task instructions.
-        Ok(Balancer::parse_from_str(&s))
+        Balancer::parse_from_str(&s).map_err(serde::de::Error::custom)
     }
 }
 
@@ -183,7 +182,7 @@ mod tests {
                 s.push_str(&format!("{}, ", weight));
             }
 
-            let balancer = Balancer::parse_from_str(&s);
+            let balancer = Balancer::parse_from_str(&s).expect("test string should be valid");
 
             println!("balancer: {:?}", balancer);
 

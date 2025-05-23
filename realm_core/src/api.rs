@@ -150,26 +150,29 @@ struct UdpAssociationResponse {
 pub async fn add_rule(req: web::Json<AddEndpointRequest>) -> impl Responder {
     let add_req = req.into_inner();
     let endpoint_conf = add_req.endpoint;
-    let endpoint_id = format!("{}_{}", endpoint_conf.laddr, endpoint_conf.raddr); // Generate ID
+    let base_endpoint_id = format!("{}_{}", endpoint_conf.laddr, endpoint_conf.raddr); // Generate ID
 
-    info!("Attempting to add new rule: {:?}, use_udp: {:?}, no_tcp: {:?}", endpoint_conf, add_req.use_udp, add_req.no_tcp);
+    info!("Attempting to add new rule for ID '{}': {:?}, use_udp: {:?}, no_tcp: {:?}", base_endpoint_id, endpoint_conf, add_req.use_udp, add_req.no_tcp);
 
-    // Check if a sender for this endpoint already exists
-    if ENDPOINT_SENDER.contains_key(&endpoint_id) {
-        warn!("Rule with ID '{}' already exists.", endpoint_id);
-        return HttpResponse::Conflict().body(format!("Rule with ID '{}' already exists.", endpoint_id));
+    // Use this clone for all DashMap operations (contains_key, insert, get, remove)
+    let map_key_id = base_endpoint_id.clone();
+
+    if ENDPOINT_SENDER.contains_key(&map_key_id) {
+        warn!("Rule with ID '{}' already exists.", map_key_id);
+        return HttpResponse::Conflict().body(format!("Rule with ID '{}' already exists.", map_key_id));
     }
 
+    // ... ApiEndpointTask definition ...
     let (tx, mut rx) = mpsc::channel::<ApiEndpointTask>(1);
 
+    // Insert uses its own clone of map_key_id as DashMap owns its keys.
+    ENDPOINT_SENDER.insert(map_key_id.clone(), tx);
 
-    // Store the sender in the global map
-    ENDPOINT_SENDER.insert(endpoint_id.clone(), tx).unwrap(); // unwrap() is fine if we check contains_key first
-
-    // Spawn a task to receive the endpoint and start it
+    // This clone is specifically for the async block.
+    let id_for_async_block = base_endpoint_id.clone();
     tokio::spawn(async move {
         if let Some(task_info) = rx.recv().await {
-            info!("Starting new endpoint: {}", task_info.endpoint);
+            info!("Starting new endpoint (from async task for ID '{}'): {}", id_for_async_block, task_info.endpoint);
             use crate::tcp::run_tcp;
             use crate::udp::run_udp;
 
@@ -181,23 +184,31 @@ pub async fn add_rule(req: web::Json<AddEndpointRequest>) -> impl Responder {
                 tokio::spawn(run_tcp(task_info.endpoint));
             }
         } else {
-            warn!("Endpoint sender for {} was dropped before sending.", endpoint_id);
+            warn!("Endpoint sender for {} was dropped before sending.", id_for_async_block);
         }
     });
 
-    // Send the endpoint info through the channel
     let task_to_send = ApiEndpointTask {
         endpoint: endpoint_conf,
-        use_udp: add_req.use_udp.unwrap_or(true), // Default use_udp to true if not specified
-        no_tcp: add_req.no_tcp.unwrap_or(false),  // Default no_tcp to false if not specified
+        use_udp: add_req.use_udp.unwrap_or(true),
+        no_tcp: add_req.no_tcp.unwrap_or(false),
     };
-    if let Err(e) = ENDPOINT_SENDER.get(&endpoint_id).unwrap().send(task_to_send).await {
-        warn!("Failed to send endpoint to worker: {}", e);
-        ENDPOINT_SENDER.remove(&endpoint_id); // Clean up the sender if sending fails
-        return HttpResponse::InternalServerError().body("Failed to activate new rule.");
+
+    // Use map_key_id for .get() and .remove()
+    if let Some(sender_entry) = ENDPOINT_SENDER.get(&map_key_id) {
+        if let Err(e) = sender_entry.value().send(task_to_send).await {
+            warn!("Failed to send endpoint to worker (for ID '{}'): {}", map_key_id, e);
+            ENDPOINT_SENDER.remove(&map_key_id); // Use map_key_id for removal
+            return HttpResponse::InternalServerError().body("Failed to activate new rule."); // Added return here
+        }
+    } else {
+        warn!("Sender not found for endpoint_id: {} after insert/spawn.", map_key_id);
+        // If sender is not found, it's an error condition.
+        return HttpResponse::InternalServerError().body(format!("Sender not found for endpoint_id: {}. Rule might not have been fully activated.", map_key_id));
     }
 
-    HttpResponse::Created().body(format!("Rule '{}' added successfully.", endpoint_id))
+    // Use base_endpoint_id for the final response.
+    HttpResponse::Created().body(format!("Rule '{}' added successfully.", base_endpoint_id))
 }
 
 #[actix_web::delete("/rules/{endpoint_id}")]

@@ -15,7 +15,7 @@ license = "MIT"
 realm_io = { version = "0.5" }
 realm_syscall = "0.1"
 realm_hook = { version = "0.1", optional = true }
-realm_lb = { version = "0.1", optional = true }
+realm_lb = { path = "../realm_lb", version = "0.1", optional = true }
 kaminari = { version = "0.12", features = ["ws", "tls", "mix"], optional = true }
 
 # other

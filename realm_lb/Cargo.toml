@@ -12,3 +12,7 @@ license = "MIT"
 
 [dev-dependencies]
 average = "0.13"
+
+# Add this section for serde
+[dependencies]
+serde = { version = "1", features = ["derive"] }

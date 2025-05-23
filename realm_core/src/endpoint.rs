@@ -63,6 +63,8 @@ pub struct ConnectOpts {
 
     #[cfg(feature = "transport")]
     #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_deserializing)]
     pub transport: Option<(MixAccept, MixConnect)>,
 
     #[cfg(feature = "balance")]

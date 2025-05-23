@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::{net::SocketAddr, rc::Rc, time::Instant};
 
 use crate::{
-    endpoint::{Endpoint, EndpointInfo},
+    endpoint::Endpoint,
     monitor::{ConnectionMetrics, TCP_CONNECTION_METRICS, UDP_ASSOCIATION_METRICS},
 };
 use log::{info, warn};
@@ -23,6 +23,8 @@ lazy_static::lazy_static! {
 #[derive(Debug, Deserialize)]
 pub struct AddEndpointRequest {
     pub endpoint: Endpoint,
+    pub use_udp: Option<bool>,
+    pub no_tcp: Option<bool>,
 }
 
 const WWW_AUTHENTICATE_HEADER: &str = "Bearer realm=\"Realm API\"";
@@ -139,10 +141,11 @@ struct UdpAssociationResponse {
 
 #[post("/rules")]
 pub async fn add_rule(req: web::Json<AddEndpointRequest>) -> impl Responder {
-    let endpoint_conf = req.into_inner().endpoint;
-    let endpoint_id = endpoint_conf.endpoint.clone(); // Assuming endpoint has a unique ID or can be used as one
+    let add_req = req.into_inner();
+    let endpoint_conf = add_req.endpoint;
+    let endpoint_id = format!("{}_{}", endpoint_conf.laddr, endpoint_conf.raddr); // Generate ID
 
-    info!("Attempting to add new rule: {:?}", endpoint_conf);
+    info!("Attempting to add new rule: {:?}, use_udp: {:?}, no_tcp: {:?}", endpoint_conf, add_req.use_udp, add_req.no_tcp);
 
     // Check if a sender for this endpoint already exists
     if ENDPOINT_SENDER.contains_key(&endpoint_id) {
@@ -150,25 +153,34 @@ pub async fn add_rule(req: web::Json<AddEndpointRequest>) -> impl Responder {
         return HttpResponse::Conflict().body(format!("Rule with ID '{}' already exists.", endpoint_id));
     }
 
-    // Create a new channel for this endpoint
-    let (tx, rx) = mpsc::channel::<Endpoint>(1); // Buffer size 1, as we only send one endpoint at a time
+    // The channel should probably send a structure that includes the endpoint and the flags
+    // For now, let's assume Endpoint itself is what's sent, and flags are used locally before spawn
+    // Or, more correctly, the task needs the flags. Let's define a small struct for the channel.
+    #[derive(Debug)]
+    struct ApiEndpointTask {
+        endpoint: Endpoint,
+        use_udp: bool,
+        no_tcp: bool,
+    }
+    let (tx, mut rx) = mpsc::channel::<ApiEndpointTask>(1);
+
 
     // Store the sender in the global map
     ENDPOINT_SENDER.insert(endpoint_id.clone(), tx);
 
     // Spawn a task to receive the endpoint and start it
     tokio::spawn(async move {
-        if let Some(endpoint) = rx.recv().await {
-            info!("Starting new endpoint: {}", endpoint.endpoint);
+        if let Some(task_info) = rx.recv().await {
+            info!("Starting new endpoint: {}", task_info.endpoint);
             use crate::tcp::run_tcp;
             use crate::udp::run_udp;
 
-            if endpoint.use_udp {
-                tokio::spawn(run_udp(endpoint.clone()));
+            if task_info.use_udp {
+                tokio::spawn(run_udp(task_info.endpoint.clone()));
             }
 
-            if !endpoint.no_tcp {
-                tokio::spawn(run_tcp(endpoint));
+            if !task_info.no_tcp {
+                tokio::spawn(run_tcp(task_info.endpoint));
             }
         } else {
             warn!("Endpoint sender for {} was dropped before sending.", endpoint_id);
@@ -176,7 +188,12 @@ pub async fn add_rule(req: web::Json<AddEndpointRequest>) -> impl Responder {
     });
 
     // Send the endpoint info through the channel
-    if let Err(e) = ENDPOINT_SENDER.get(&endpoint_id).unwrap().send(endpoint_conf).await {
+    let task_to_send = ApiEndpointTask {
+        endpoint: endpoint_conf,
+        use_udp: add_req.use_udp.unwrap_or(true), // Default use_udp to true if not specified
+        no_tcp: add_req.no_tcp.unwrap_or(false),  // Default no_tcp to false if not specified
+    };
+    if let Err(e) = ENDPOINT_SENDER.get(&endpoint_id).unwrap().send(task_to_send).await {
         warn!("Failed to send endpoint to worker: {}", e);
         ENDPOINT_SENDER.remove(&endpoint_id); // Clean up the sender if sending fails
         return HttpResponse::InternalServerError().body("Failed to activate new rule.");
